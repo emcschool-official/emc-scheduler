@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EMA Gading Serpong — Scheduler</title>
+<style>
+  /* ── reset & base ── */
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;background:#F5F5F5;color:#1a1a1a;min-height:100vh}
+
+  /* ── layout ── */
+  .app{max-width:900px;margin:0 auto;padding:16px}
+  .topbar{background:#fff;border-radius:12px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .logo{font-size:15px;font-weight:600;color:#1a1a1a}
+  .logo span{color:#4A86C8}
+  .nav{display:flex;gap:6px;flex-wrap:wrap}
+  .nav-btn{font-size:12px;padding:6px 14px;border-radius:100px;border:1px solid #ddd;background:transparent;color:#666;cursor:pointer;transition:.15s}
+  .nav-btn:hover{background:#f0f0f0}
+  .nav-btn.active{background:#4A86C8;color:#fff;border-color:#4A86C8}
+
+  /* ── panels ── */
+  .panel{display:none}.panel.active{display:block}
+  .card{background:#fff;border-radius:12px;padding:16px 18px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .card-title{font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:12px}
+
+  /* ── loading ── */
+  .loading{text-align:center;padding:40px;color:#888;font-size:13px}
+  .spinner{width:24px;height:24px;border:2px solid #eee;border-top-color:#4A86C8;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── teacher selector ── */
+  .teacher-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .teacher-row label{font-size:12px;color:#888}
+  select,input[type=text],textarea{font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a1a;outline:none}
+  select:focus,input:focus,textarea:focus{border-color:#4A86C8}
+
+  /* ── day tabs ── */
+  .day-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px}
+  .day-tab{font-size:12px;padding:5px 12px;border-radius:100px;border:1px solid #ddd;background:transparent;color:#666;cursor:pointer}
+  .day-tab.active{background:#f0f0f0;color:#1a1a1a;border-color:#bbb}
+
+  /* ── legend ── */
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+  .leg{display:flex;align-items:center;gap:5px;font-size:11px;color:#888}
+  .leg-dot{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+
+  /* ── schedule grid ── */
+  .grid-wrap{overflow-x:auto}
+  table.sg{border-collapse:collapse;min-width:480px}
+  table.sg th{font-size:11px;font-weight:600;color:#888;padding:6px 4px;text-align:center;border-bottom:1px solid #eee;white-space:nowrap;min-width:110px}
+  table.sg th.timeh{min-width:50px;text-align:left}
+  table.sg td.tc{font-size:10px;color:#aaa;padding:1px 6px 1px 0;vertical-align:top;width:50px;border-right:1px solid #f0f0f0;white-space:nowrap}
+  table.sg td.rc{padding:1px 2px;vertical-align:top}
+  .slot{border-radius:6px;padding:5px 7px;border:1px solid rgba(0,0,0,.08);margin:1px 0;display:flex;flex-direction:column;justify-content:center}
+  .slot.clickable{cursor:pointer}.slot.clickable:hover{filter:brightness(.93)}
+  .slot-name{font-size:11px;font-weight:600;color:#1a1a1a;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .slot-sub{font-size:10px;color:#555;line-height:1.3;opacity:.8}
+  .slot-tag{font-size:9px;font-weight:600;border-radius:3px;padding:2px 5px;display:inline-block;margin-top:2px}
+  .slot.freed{opacity:.55;border-style:dashed}
+  .slot.trial-free{border:2px dashed #639922!important;background:#EAF3DE!important}
+  .slot.trial-paid{border:2px dashed #D4537E!important;background:#FBEAF0!important}
+  .slot.pending-reschedule{border:2px dashed #7F77DD!important;background:#EEEDFE!important}
+  .slot.pending-new{border:2px dashed #1D9E75!important;background:#E1F5EE!important}
+  .slot.free-empty{background:#fafafa;border:1px dashed #ddd;cursor:pointer}
+  .slot.free-empty:hover{background:#f0f7ff;border-color:#4A86C8}
+
+  /* ── badges ── */
+  .badge{display:inline-block;font-size:10px;padding:2px 9px;border-radius:100px;font-weight:600;white-space:nowrap}
+  .bg-amber{background:#FFF3CD;color:#856404}
+  .bg-green{background:#D1E7DD;color:#0F5132}
+  .bg-pink{background:#F8D7DA;color:#842029}
+  .bg-blue{background:#CFE2FF;color:#084298}
+  .bg-purple{background:#E2DBFB;color:#4527A0}
+  .bg-teal{background:#D4EDDA;color:#155724}
+  .bg-gray{background:#F0F0F0;color:#555}
+  .bg-red{background:#F8D7DA;color:#842029}
+
+  /* ── request rows ── */
+  .req-row{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid #f5f5f5;flex-wrap:wrap}
+  .req-row:last-child{border:none}
+  .av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+
+  /* ── stats ── */
+  .stats-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+  .stat-card{background:#fff;border-radius:10px;padding:12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .stat-n{font-size:24px;font-weight:700;color:#1a1a1a}
+  .stat-l{font-size:11px;color:#888;margin-top:2px}
+
+  /* ── buttons ── */
+  .btn{font-size:12px;padding:5px 12px;border-radius:100px;border:1px solid #ddd;background:#fff;color:#555;cursor:pointer;transition:.15s}
+  .btn:hover{background:#f5f5f5}
+  .btn-green{border-color:#198754;background:#D1E7DD;color:#0F5132}
+  .btn-blue{border-color:#084298;background:#CFE2FF;color:#084298}
+  .btn-red{border-color:#842029;background:#F8D7DA;color:#842029}
+  .btn-primary{background:#4A86C8;color:#fff;border-color:#4A86C8}
+  .btn-primary:hover{background:#3a76b8}
+
+  /* ── data table ── */
+  .data-table{width:100%;border-collapse:collapse;font-size:12px}
+  .data-table th{font-size:11px;font-weight:600;color:#888;padding:8px;text-align:left;border-bottom:1px solid #eee}
+  .data-table td{padding:8px;border-bottom:1px solid #f5f5f5;vertical-align:middle}
+  .data-table tr:hover td{background:#fafafa}
+
+  /* ── modal ── */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+  .modal-overlay.show{display:flex}
+  .modal-box{background:#fff;border-radius:16px;padding:22px;width:100%;max-width:360px;max-height:85vh;overflow-y:auto}
+  .modal-title{font-size:14px;font-weight:600;color:#1a1a1a;margin-bottom:4px}
+  .modal-sub{font-size:12px;color:#888;margin-bottom:16px;line-height:1.5}
+  .action-card{padding:11px 13px;border-radius:10px;border:1px solid #eee;cursor:pointer;background:#fafafa;margin-bottom:8px;transition:.15s}
+  .action-card:hover{background:#f0f0f0}
+  .action-card.sel{border-color:#4A86C8;background:#EEF5FF}
+  .action-card-title{font-size:13px;font-weight:600;color:#1a1a1a}
+  .action-card.sel .action-card-title{color:#084298}
+  .action-card-desc{font-size:11px;color:#888;margin-top:2px;line-height:1.4}
+  .step{display:none}.step.active{display:block}
+  .back-link{font-size:12px;color:#4A86C8;cursor:pointer;margin-bottom:12px;display:inline-block}
+  .reason-opt{display:block;width:100%;text-align:left;padding:9px 12px;border-radius:8px;border:1px solid #eee;background:#fafafa;font-size:12px;cursor:pointer;margin-bottom:6px}
+  .reason-opt.sel{border-color:#4A86C8;background:#EEF5FF;color:#084298}
+  .free-slot-list{max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .free-slot-opt{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;border:1px solid #eee;background:#fafafa;font-size:12px;cursor:pointer}
+  .free-slot-opt:hover{background:#f0f7ff}
+  .free-slot-opt.sel{border-color:#198754;background:#D1E7DD;color:#0F5132}
+  .form-label{font-size:12px;color:#666;margin-bottom:4px;margin-top:10px;display:block}
+  .modal-confirm{width:100%;padding:10px;border-radius:8px;border:none;background:#4A86C8;color:#fff;font-size:13px;font-weight:600;cursor:pointer;margin-top:10px}
+  .modal-confirm:hover{background:#3a76b8}
+  .modal-confirm:disabled{opacity:.4;cursor:default}
+  .modal-cancel{width:100%;padding:8px;border-radius:8px;border:none;background:transparent;color:#888;font-size:12px;cursor:pointer;margin-top:4px}
+
+  /* ── toast ── */
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;font-size:13px;padding:10px 20px;border-radius:100px;z-index:200;display:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+
+  /* ── search ── */
+  .search-bar{width:100%;max-width:260px;margin-bottom:12px;font-size:12px;padding:7px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a1a;outline:none}
+  .filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- topbar -->
+  <div class="topbar">
+    <div class="logo">EMA <span>Gading Serpong</span></div>
+    <div class="nav">
+      <button class="nav-btn active" onclick="goPanel('schedule',this)">My Schedule</button>
+      <button class="nav-btn" onclick="goPanel('students',this)">Students</button>
+      <button class="nav-btn" onclick="goPanel('admin',this)">Admin</button>
+      <button class="nav-btn" onclick="goPanel('rooms',this)">Rooms</button>
+    </div>
+  </div>
+
+  <!-- loading -->
+  <div id="loading-state" class="card">
+    <div class="loading"><div class="spinner"></div>Loading schedule data...</div>
+  </div>
+
+  <!-- ══ SCHEDULE PANEL ══ -->
+  <div id="panel-schedule" class="panel" style="display:none">
+    <div class="card">
+      <div class="teacher-row">
+        <label>Teacher:</label>
+        <select id="teacher-sel" onchange="onTeacherChange()"></select>
+        <span id="teacher-count" style="font-size:11px;color:#888"></span>
+      </div>
+      <div class="legend">
+        <div class="leg"><div class="leg-dot" style="background:#A0C5E8;border:1px solid rgba(0,0,0,.1)"></div>Permanent — tap to request change</div>
+        <div class="leg"><div class="leg-dot" style="background:#FFF3CD;border:1px dashed #EF9F27"></div>Absence pending</div>
+        <div class="leg"><div class="leg-dot" style="background:#E2DBFB;border:1px dashed #7F77DD"></div>Reschedule pending</div>
+        <div class="leg"><div class="leg-dot" style="background:#E1F5EE;border:1px dashed #1D9E75"></div>New slot pending</div>
+        <div class="leg"><div class="leg-dot" style="background:#fafafa;border:1px dashed #ccc"></div>Free slot — tap to request</div>
+      </div>
+      <div class="day-tabs" id="day-tabs-sched"></div>
+      <div class="grid-wrap"><table class="sg" id="sched-grid"></table></div>
+      <div style="margin-top:10px;font-size:11px;color:#aaa">Tap a slot to report absence, request reschedule, or change permanent schedule. Tap free slots to add a new student.</div>
+    </div>
+  </div>
+
+  <!-- ══ STUDENTS PANEL ══ -->
+  <div id="panel-students" class="panel" style="display:none">
+    <div class="card">
+      <div class="filter-row">
+        <input class="search-bar" style="margin:0" type="text" id="stu-search" placeholder="Search name or ID..." oninput="renderStudents()">
+        <select id="f-teacher" onchange="renderStudents()"><option value="">All teachers</option></select>
+        <select id="f-day" onchange="renderStudents()"><option value="">All days</option></select>
+        <select id="f-grade" onchange="renderStudents()"><option value="">All grades</option></select>
+      </div>
+      <div style="overflow-x:auto"><table class="data-table" id="stu-table"></table></div>
+      <div id="stu-count" style="font-size:11px;color:#aaa;margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ══ ADMIN PANEL ══ -->
+  <div id="panel-admin" class="panel" style="display:none">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-n" id="s-students">—</div><div class="stat-l">Students</div></div>
+      <div class="stat-card"><div class="stat-n" id="s-pending">0</div><div class="stat-l">Pending</div></div>
+      <div class="stat-card"><div class="stat-n" id="s-trials">0</div><div class="stat-l">Trial slots</div></div>
+      <div class="stat-card"><div class="stat-n" id="s-teachers">16</div><div class="stat-l">Teachers</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pending requests</div>
+      <div id="admin-pending"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Approved this week</div>
+      <div id="admin-approved"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Teacher overview</div>
+      <div id="admin-teachers"></div>
+    </div>
+  </div>
+
+  <!-- ══ ROOMS PANEL ══ -->
+  <div id="panel-rooms" class="panel" style="display:none">
+    <div class="card">
+      <div class="day-tabs" id="day-tabs-rooms"></div>
+      <div class="grid-wrap"><table class="sg" id="rooms-grid"></table></div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- ══ MODAL ══ -->
+<div class="modal-overlay" id="modal">
+<div class="modal-box">
+
+  <!-- step: choose action (permanent slot) -->
+  <div class="step active" id="step-action">
+    <div class="modal-title" id="m-title">What would you like to change?</div>
+    <div class="modal-sub" id="m-sub"></div>
+    <div id="action-cards">
+      <div class="action-card" onclick="pickAction('absence')">
+        <div class="action-card-title">Report student absence</div>
+        <div class="action-card-desc">Student won't attend this week. Admin may open the slot for a trial booking.</div>
+      </div>
+      <div class="action-card" onclick="pickAction('reschedule')">
+        <div class="action-card-title">Reschedule this slot</div>
+        <div class="action-card-desc">Move this student to a different day or time this week.</div>
+      </div>
+      <div class="action-card" onclick="pickAction('permanent-change')">
+        <div class="action-card-title">Change permanent schedule</div>
+        <div class="action-card-desc">Permanently move, cancel, or modify this recurring slot.</div>
+      </div>
+    </div>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>
+
+  <!-- step: reason -->
+  <div class="step" id="step-reason">
+    <span class="back-link" onclick="goStep('step-action')">← Back</span>
+    <div class="modal-title" id="reason-title">Reason</div>
+    <div class="modal-sub" id="reason-sub"></div>
+    <div id="reason-opts"></div>
+    <button class="modal-confirm" onclick="submitReason()">Submit for admin review</button>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>
+
+  <!-- step: pick free slot (reschedule) -->
+  <div class="step" id="step-pick-slot">
+    <span class="back-link" onclick="goStep('step-action')">← Back</span>
+    <div class="modal-title">Pick a free slot</div>
+    <div class="modal-sub">Only slots with no conflict across all teachers are shown.</div>
+    <div class="free-slot-list" id="free-slot-list"></div>
+    <button class="modal-confirm" id="pick-confirm" onclick="submitReschedule()" disabled>Submit for admin review</button>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>
+
+  <!-- step: new slot (free slot tapped) -->
+  <div class="step" id="step-new-slot">
+    <div class="modal-title" id="new-slot-title">Request new permanent slot</div>
+    <div class="modal-sub" id="new-slot-sub"></div>
+    <label class="form-label">Student name</label>
+    <input type="text" id="new-name" placeholder="e.g. Budi Santoso" style="width:100%">
+    <label class="form-label">Grade / Level</label>
+    <select id="new-grade" style="width:100%">
+      <option>Beginner 1</option><option>Beginner 2</option>
+      <option>Elementary 1</option><option>Elementary 2</option>
+      <option>Intermediate 1</option><option>Intermediate 2</option>
+      <option>Advanced 1</option><option>Advanced 2</option><option>Performance</option>
+    </select>
+    <label class="form-label">Duration</label>
+    <select id="new-dur" style="width:100%"><option value="45">45 min</option><option value="60">60 min</option></select>
+    <button class="modal-confirm" onclick="submitNewSlot()">Submit for admin review</button>
+    <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+  </div>
+
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── CONFIG — replace with your deployed Apps Script URL ──────
+const API_URL = 'https://script.google.com/macros/s/AKfycbyQoEQN2Hz7_b6aLA2MUSH2-exKefk93VuN45TurRxIhjy7NsKNQmWYsbJVicqyzjjxzw/exec';
+
+const DAYS  = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'];
+const GRADES= ['Beginner 1','Beginner 2','Elementary 1','Elementary 2','Intermediate 1','Intermediate 2','Advanced 1','Advanced 2','Performance'];
+const GC    = {'Beginner 1':'#E8F4FD','Beginner 2':'#D1E9F7','Elementary 1':'#D5F0E8','Elementary 2':'#AADECF','Intermediate 1':'#FEF3CD','Intermediate 2':'#FDDFA0','Advanced 1':'#FFE0CC','Advanced 2':'#FFBF99','Performance':'#F2D7F5'};
+const TC    = {Nadya:'#F4CCCC',Jessica:'#A0C5E8',Becca:'#B4A7D6',Tantri:'#E6B8AF',Ellen:'#B6D7A8',Susi:'#CFE2F3',Jocelyn:'#D9EAD3',Catherine:'#FFE599',Febi:'#D9D2E9',Reina:'#F9CB9C',Grace:'#EAD1DC',Osy:'#D0E0E3',Charissa:'#FCE5CD',Sharleen:'#B7B7B7',Jacklyn:'#A2C4C9',Claudia:'#C9DAF8'};
+
+// ── state ────────────────────────────────────────────────────
+let STUDENTS=[], REQUESTS=[], OVERRIDES=[];
+let currentTeacher=0, currentSchedDay=0, currentRoomDay=0;
+let pendingModal=null, selectedAction=null, selectedFreeSlot=null;
+
+// ── fetch all data on load ───────────────────────────────────
+async function loadData(){
+  try {
+    const res  = await fetch(API_URL + '?action=getAll');
+    const data = await res.json();
+    STUDENTS  = data.students  || [];
+    REQUESTS  = data.requests  || [];
+    OVERRIDES = data.overrides || [];
+  } catch(e){
+    // fallback: show empty state with error message
+    STUDENTS=[]; REQUESTS=[]; OVERRIDES=[];
+    showToast('Could not reach server — check API_URL in the code');
+  }
+  document.getElementById('loading-state').style.display='none';
+  document.getElementById('panel-schedule').style.display='block';
+  initApp();
+}
+
+// ── API call helper ──────────────────────────────────────────
+async function apiPost(body){
+  const res = await fetch(API_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+// ── init ─────────────────────────────────────────────────────
+function initApp(){
+  const teachers = [...new Set(STUDENTS.map(s=>s.teacher))].sort();
+  const sel = document.getElementById('teacher-sel');
+  teachers.forEach((t,i)=>{ const o=document.createElement('option');o.value=i;o.textContent=t;sel.appendChild(o); });
+
+  // student filters
+  teachers.forEach(t=>{ const o=document.createElement('option');o.value=t;o.textContent=t;document.getElementById('f-teacher').appendChild(o); });
+  DAYS.forEach(d=>{ const o=document.createElement('option');o.value=d;o.textContent=d;document.getElementById('f-day').appendChild(o); });
+  GRADES.forEach(g=>{ const o=document.createElement('option');o.value=g;o.textContent=g;document.getElementById('f-grade').appendChild(o); });
+
+  makeDayTabs('day-tabs-sched', i=>{currentSchedDay=i;renderSchedGrid();}, 0);
+  makeDayTabs('day-tabs-rooms', i=>{currentRoomDay=i;renderRoomsGrid();}, 0);
+  renderSchedGrid();
+  renderStudents();
+  renderAdmin();
+  renderRoomsGrid();
+}
+
+function makeDayTabs(id, fn, active){
+  const c=document.getElementById(id); c.innerHTML='';
+  DAYS.forEach((d,i)=>{
+    const btn=document.createElement('button');
+    btn.className='day-tab'+(i===active?' active':'');btn.textContent=d;
+    btn.onclick=()=>{ c.querySelectorAll('.day-tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); fn(i); };
+    c.appendChild(btn);
+  });
+}
+
+function goPanel(p,btn){
+  document.querySelectorAll('.panel').forEach(v=>v.style.display='none');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('panel-'+p).style.display='block'; btn.classList.add('active');
+  if(p==='admin') renderAdmin();
+  if(p==='rooms') renderRoomsGrid();
+}
+
+// ── helpers ──────────────────────────────────────────────────
+function toMin(t){const[h,m]=t.split(':').map(Number);return h*60+m;}
+function fmt(m){return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;}
+function onTeacherChange(){currentTeacher=parseInt(document.getElementById('teacher-sel').value);renderSchedGrid();}
+function getTeachers(){return[...new Set(STUDENTS.map(s=>s.teacher))].sort();}
+function getTeacherName(){return getTeachers()[currentTeacher]||'';}
+
+function getPendingKey(key, teacher){
+  return REQUESTS.find(r=>r.status==='Pending'&&r.teacher===teacher&&`${r.room}|${r.start}`===key);
+}
+
+// ── SCHEDULE GRID ────────────────────────────────────────────
+function renderSchedGrid(){
+  const tName = getTeacherName();
+  const myS   = STUDENTS.filter(s=>s.teacher===tName && s.day===DAYS[currentSchedDay]);
+  document.getElementById('teacher-count').textContent = `(${STUDENTS.filter(s=>s.teacher===tName).length} students)`;
+
+  if(!myS.length){
+    document.getElementById('sched-grid').innerHTML=`<tbody><tr><td style="padding:20px;font-size:12px;color:#aaa">No sessions on ${DAYS[currentSchedDay]}.</td></tr></tbody>`;
+    return;
+  }
+
+  const minT    = Math.min(...myS.map(s=>toMin(s.start)));
+  const maxT    = Math.max(...myS.map(s=>toMin(s.end)));
+  const myRooms = [...new Set(myS.map(s=>s.room))];
+  const times   = []; for(let t=minT;t<=maxT;t+=15)times.push(t);
+
+  const smap={};myS.forEach(s=>smap[`${s.room}|${s.start}`]=s);
+  const covered={};myRooms.forEach(r=>covered[r]=new Set());
+  myS.forEach(s=>{for(let t=toMin(s.start)+15;t<toMin(s.end);t+=15)covered[s.room].add(t);});
+
+  // occupied across all teachers this day
+  const occupied=new Set();
+  STUDENTS.filter(s=>s.day===DAYS[currentSchedDay]).forEach(s=>{
+    for(let t=toMin(s.start);t<toMin(s.end);t+=15) occupied.add(`${s.room}|${t}`);
+  });
+
+  let html='<thead><tr><th class="timeh">Time</th>';
+  myRooms.forEach(r=>html+=`<th>${r}</th>`);html+='</tr></thead><tbody>';
+
+  times.forEach(t=>{
+    const isHour=t%60===0;
+    html+=`<tr><td class="tc" style="padding-top:${isHour?5:1}px">${isHour?fmt(t):''}</td>`;
+    myRooms.forEach(room=>{
+      const stu  = smap[`${room}|${fmt(t)}`];
+      const key  = `${room}|${fmt(t)}`;
+      const pReq = stu ? getPendingKey(key, tName) : null;
+      const inter= covered[room].has(t);
+      const isFree= !occupied.has(`${room}|${t}`) && !inter;
+
+      if(stu){
+        const h   = Math.max(30, Math.round((stu.dur/15)*15));
+        const col = TC[stu.teacher] || '#eee';
+        if(pReq){
+          const styles={
+            'absence':`background:${col};border-color:#EF9F27;border-style:dashed`,
+            'reschedule':'background:#EEEDFE;border-color:#7F77DD;border-style:dashed',
+            'permanent-change':`background:#FFF3CD;border-color:#BA7517;border-style:dashed`,
+          };
+          const tags={'absence':'Absence pending','reschedule':'Reschedule pending','permanent-change':'Change pending'};
+          html+=`<td class="rc"><div class="slot" style="${styles[pReq.type]||''};height:${h}px">
+            <div class="slot-name">${stu.name}</div><div class="slot-sub">${stu.grade}</div>
+            <span class="slot-tag" style="background:#FFF3CD;color:#856404">${tags[pReq.type]||'Pending'}</span>
+          </div></td>`;
+        } else {
+          html+=`<td class="rc"><div class="slot clickable" style="background:${col};height:${h}px"
+            onclick="openPermSlot('${key}','${tName}','${room}','${fmt(t)}','${stu.end}',${stu.dur},'${stu.name.replace(/'/g,"\\'")}','${stu.grade}')">
+            <div class="slot-name">${stu.name}</div>
+            <div class="slot-sub">${stu.grade} · ${fmt(t)}–${stu.end} · ${stu.dur}min</div>
+          </div></td>`;
+        }
+      } else if(isFree){
+        const pNew=REQUESTS.find(r=>r.status==='Pending'&&r.type==='new-permanent'&&DAYS.indexOf(r.targetDay)===currentSchedDay&&r.targetRoom===room&&r.targetStart===fmt(t));
+        if(pNew){
+          html+=`<td class="rc"><div class="slot pending-new" style="height:30px">
+            <div class="slot-name" style="color:#0F5132">${pNew.newStudentName}</div>
+            <span class="slot-tag" style="background:#D1E7DD;color:#0F5132">New slot pending</span>
+          </div></td>`;
+        } else {
+          html+=`<td class="rc"><div class="slot free-empty" style="height:30px" onclick="openFreeSlot('${tName}',${currentSchedDay},'${room}','${fmt(t)}')">
+            <div class="slot-sub" style="font-size:9px;color:#ccc">${fmt(t)} · free</div>
+          </div></td>`;
+        }
+      } else if(inter){
+        html+=`<td class="rc"></td>`;
+      } else {
+        html+=`<td class="rc"><div style="height:15px"></div></td>`;
+      }
+    });
+    html+='</tr>';
+  });
+  html+='</tbody>';
+  document.getElementById('sched-grid').innerHTML=html;
+}
+
+// ── MODALS ───────────────────────────────────────────────────
+function openPermSlot(key,teacher,room,start,end,dur,name,grade){
+  if(REQUESTS.find(r=>r.status==='Pending'&&r.teacher===teacher&&`${r.room}|${r.start}`===key))return;
+  pendingModal={key,teacher,room,start,end,dur,name,grade,day:DAYS[currentSchedDay]};
+  selectedAction=null;
+  document.getElementById('m-title').textContent='What would you like to change?';
+  document.getElementById('m-sub').textContent=`${name} · ${grade} · ${DAYS[currentSchedDay]} ${start}–${end} · ${room}`;
+  document.querySelectorAll('.action-card').forEach(c=>c.classList.remove('sel'));
+  goStep('step-action');
+  document.getElementById('modal').classList.add('show');
+}
+
+function openFreeSlot(teacher,dayIdx,room,start){
+  pendingModal={teacher,dayIdx,room,start};
+  document.getElementById('new-slot-title').textContent='Request new permanent slot';
+  document.getElementById('new-slot-sub').textContent=`${DAYS[dayIdx]} · ${start} · ${room}`;
+  document.getElementById('new-name').value='';
+  goStep('step-new-slot');
+  document.getElementById('modal').classList.add('show');
+}
+
+function pickAction(action){
+  selectedAction=action;
+  document.querySelectorAll('.action-card').forEach(c=>c.classList.remove('sel'));
+  event.currentTarget.classList.add('sel');
+
+  if(action==='absence'||action==='permanent-change'){
+    const reasonMap={
+      'absence':['Student is absent this week','Student is taking a break','Other'],
+      'permanent-change':['Permanently moving to another slot','Student stopping lessons','Changing day or time permanently','Other'],
+    };
+    document.getElementById('reason-title').textContent = action==='absence'?'Reason for absence':'Reason for change';
+    document.getElementById('reason-sub').textContent   = pendingModal.name+' · '+pendingModal.grade;
+    pendingModal.reason = reasonMap[action][0];
+    document.getElementById('reason-opts').innerHTML = reasonMap[action].map((r,i)=>
+      `<button class="reason-opt${i===0?' sel':''}" onclick="selReason(this,'${r}')">${r}</button>`
+    ).join('');
+    goStep('step-reason');
+  } else {
+    buildFreeSlotPicker();
+    goStep('step-pick-slot');
+  }
+}
+
+function selReason(el,r){ document.querySelectorAll('.reason-opt').forEach(b=>b.classList.remove('sel')); el.classList.add('sel'); pendingModal.reason=r; }
+
+function buildFreeSlotPicker(){
+  const occupied=new Set();
+  STUDENTS.forEach(s=>{ for(let t=toMin(s.start);t<toMin(s.end);t+=15) occupied.add(`${s.day}|${s.room}|${t}`); });
+  const myRooms=[...new Set(STUDENTS.filter(s=>s.teacher===pendingModal.teacher).map(s=>s.room))];
+  const free=[];
+  DAYS.forEach(day=>{ myRooms.forEach(room=>{
+    for(let t=8*60;t<20*60;t+=15){
+      if(!occupied.has(`${day}|${room}|${t}`)){
+        let chunk=0; for(let d=0;d<60&&!occupied.has(`${day}|${room}|${t+d}`);d+=15)chunk+=15;
+        if(chunk>=45){ free.push({day,room,start:fmt(t),end:fmt(t+45),dur:45}); t+=44; }
+      }
+    }
+  }); });
+
+  selectedFreeSlot=null;
+  document.getElementById('pick-confirm').disabled=true;
+  const list=document.getElementById('free-slot-list');
+  if(!free.length){list.innerHTML='<div style="font-size:12px;color:#aaa;padding:8px">No free slots found in your rooms.</div>';return;}
+  list.innerHTML=free.slice(0,25).map((fs,i)=>
+    `<div class="free-slot-opt" onclick="selFreeSlot(this,${i})" data-idx="${i}">
+      <span><strong>${fs.day}</strong> · ${fs.room} · ${fs.start}–${fs.end}</span>
+      <span style="font-size:10px;color:#888">${fs.dur}min</span>
+    </div>`
+  ).join('');
+  list._slots=free;
+}
+
+function selFreeSlot(el,i){
+  document.querySelectorAll('.free-slot-opt').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  selectedFreeSlot=document.getElementById('free-slot-list')._slots[i];
+  document.getElementById('pick-confirm').disabled=false;
+}
+
+async function submitReason(){
+  const body={
+    action:'submitRequest', type:selectedAction,
+    teacher:pendingModal.teacher, studentName:pendingModal.name,
+    grade:pendingModal.grade, day:pendingModal.day,
+    room:pendingModal.room, start:pendingModal.start,
+    end:pendingModal.end, dur:pendingModal.dur,
+    reason:pendingModal.reason,
+  };
+  await apiPost(body);
+  // optimistic local update
+  REQUESTS.push({...body, requestId:'LOCAL-'+Date.now(), status:'Pending', type:selectedAction});
+  closeModal(); renderSchedGrid(); showToast('Sent to admin for review');
+}
+
+async function submitReschedule(){
+  if(!selectedFreeSlot)return;
+  const body={
+    action:'submitRequest', type:'reschedule',
+    teacher:pendingModal.teacher, studentName:pendingModal.name,
+    grade:pendingModal.grade, day:pendingModal.day,
+    room:pendingModal.room, start:pendingModal.start,
+    end:pendingModal.end, dur:pendingModal.dur,
+    reason:'Reschedule requested',
+    targetDay:selectedFreeSlot.day, targetRoom:selectedFreeSlot.room,
+    targetStart:selectedFreeSlot.start, targetEnd:selectedFreeSlot.end,
+  };
+  await apiPost(body);
+  REQUESTS.push({...body, requestId:'LOCAL-'+Date.now(), status:'Pending'});
+  closeModal(); renderSchedGrid(); showToast('Reschedule sent to admin');
+}
+
+async function submitNewSlot(){
+  const name=document.getElementById('new-name').value.trim();
+  if(!name){document.getElementById('new-name').style.borderColor='#dc3545';return;}
+  const body={
+    action:'submitRequest', type:'new-permanent',
+    teacher:pendingModal.teacher,
+    targetDay:DAYS[pendingModal.dayIdx], targetRoom:pendingModal.room,
+    targetStart:pendingModal.start,
+    newStudentName:name,
+    newGrade:document.getElementById('new-grade').value,
+    newDur:parseInt(document.getElementById('new-dur').value),
+    reason:'New permanent slot request',
+  };
+  await apiPost(body);
+  REQUESTS.push({...body, requestId:'LOCAL-'+Date.now(), status:'Pending'});
+  closeModal(); renderSchedGrid(); showToast('New slot request sent to admin');
+}
+
+function goStep(id){ document.querySelectorAll('.step').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function closeModal(){ document.getElementById('modal').classList.remove('show'); pendingModal=null; selectedAction=null; selectedFreeSlot=null; }
+
+// ── ADMIN ────────────────────────────────────────────────────
+function renderAdmin(){
+  const pending  = REQUESTS.filter(r=>r.status==='Pending');
+  const approved = REQUESTS.filter(r=>r.status==='Approved');
+  const trials   = approved.filter(r=>r.trialType);
+  document.getElementById('s-students').textContent = STUDENTS.length;
+  document.getElementById('s-pending').textContent  = pending.length;
+  document.getElementById('s-trials').textContent   = trials.length;
+
+  const TYPE_BADGE={'absence':'bg-amber','reschedule':'bg-purple','permanent-change':'bg-amber','new-permanent':'bg-teal'};
+  const TYPE_LABEL={'absence':'Absence','reschedule':'Reschedule','permanent-change':'Perm change','new-permanent':'New slot'};
+
+  const pl=document.getElementById('admin-pending');
+  if(!pending.length){pl.innerHTML='<div style="font-size:12px;color:#aaa">No pending requests.</div>';}
+  else pl.innerHTML=pending.map((r,i)=>{
+    const col=TC[r.teacher]||'#ddd';
+    let detail='';
+    if(r.type==='reschedule') detail=`<div style="font-size:10px;color:#888;margin-top:2px">Move to: ${r.targetDay} · ${r.targetRoom} · ${r.targetStart}</div>`;
+    if(r.type==='new-permanent') detail=`<div style="font-size:10px;color:#888;margin-top:2px">New: ${r.newStudentName} · ${r.newGrade} · ${r.newDur}min · ${r.targetDay} ${r.targetStart} · ${r.targetRoom}</div>`;
+    const approveRow = r.type==='absence'
+      ? `<button class="btn btn-green" onclick="adminApprove('${r.requestId}','free')">Free trial (15min)</button>
+         <button class="btn btn-blue" style="margin-left:4px" onclick="adminApprove('${r.requestId}','paid')">Paid trial (45min)</button>
+         <button class="btn btn-red" style="margin-left:4px" onclick="adminReject('${r.requestId}')">Dismiss</button>`
+      : `<button class="btn btn-green" onclick="adminApprove('${r.requestId}','')">Approve</button>
+         <button class="btn btn-red" style="margin-left:4px" onclick="adminReject('${r.requestId}')">Reject</button>`;
+    return `<div class="req-row">
+      <div class="av" style="background:${col};color:#222">${r.teacher.slice(0,2)}</div>
+      <div style="flex:1;min-width:120px">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-weight:600">${r.studentName||r.newStudentName||'—'}</span>
+          <span class="badge ${TYPE_BADGE[r.type]||'bg-gray'}">${TYPE_LABEL[r.type]||r.type}</span>
+        </div>
+        <div style="font-size:11px;color:#888">${r.teacher} · ${r.day||''} ${r.room||''} ${r.start||''}</div>
+        <div style="font-size:11px;color:#aaa;font-style:italic">${r.reason||''}</div>
+        ${detail}
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${approveRow}</div>
+    </div>`;
+  }).join('');
+
+  const al=document.getElementById('admin-approved');
+  if(!approved.length){al.innerHTML='<div style="font-size:12px;color:#aaa">None yet.</div>';}
+  else al.innerHTML=approved.map(r=>{
+    const tl=r.trialType?` → ${r.trialType==='free'?'Free trial 15min':'Paid trial 45min'}`:'';
+    return `<div class="req-row">
+      <div class="av" style="background:${TC[r.teacher]||'#ddd'};color:#222">${r.teacher.slice(0,2)}</div>
+      <div style="flex:1">
+        <div style="font-weight:600">${r.studentName||r.newStudentName||'—'} <span class="badge bg-green">Approved</span></div>
+        <div style="font-size:11px;color:#888">${r.teacher} · ${TYPE_LABEL[r.type]||r.type}${tl}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const teachers=getTeachers();
+  document.getElementById('s-teachers').textContent=teachers.length;
+  document.getElementById('admin-teachers').innerHTML=teachers.map(t=>{
+    const tot=STUDENTS.filter(s=>s.teacher===t).length;
+    const pnd=REQUESTS.filter(r=>r.teacher===t&&r.status==='Pending').length;
+    return `<div class="req-row">
+      <div class="av" style="background:${TC[t]||'#ddd'};color:#222">${t.slice(0,2)}</div>
+      <div style="flex:1"><div style="font-weight:600">${t}</div>
+      <div style="font-size:11px;color:#888">${tot} students · ${pnd} pending</div></div>
+      ${pnd>0?`<span class="badge bg-amber">${pnd} pending</span>`:`<span class="badge bg-gray">All clear</span>`}
+    </div>`;
+  }).join('');
+}
+
+async function adminApprove(requestId, trialType){
+  const res = await apiPost({action:'approveRequest', requestId, trialType});
+  if(res.error){ showToast('Error: '+res.error); return; }
+  const r = REQUESTS.find(x=>x.requestId===requestId);
+  if(r){ r.status='Approved'; r.trialType=trialType; }
+  if(trialType) OVERRIDES.push({teacher:r?.teacher,day:r?.day,room:r?.room,start:r?.start,trialType});
+  renderAdmin(); renderSchedGrid(); showToast('Approved');
+}
+
+async function adminReject(requestId){
+  const res = await apiPost({action:'rejectRequest', requestId});
+  if(res.error){ showToast('Error: '+res.error); return; }
+  const r = REQUESTS.find(x=>x.requestId===requestId);
+  if(r) r.status='Rejected';
+  renderAdmin(); renderSchedGrid(); showToast('Rejected');
+}
+
+// ── STUDENTS ─────────────────────────────────────────────────
+function renderStudents(){
+  const q  = document.getElementById('stu-search').value.toLowerCase();
+  const ft = document.getElementById('f-teacher').value;
+  const fd = document.getElementById('f-day').value;
+  const fg = document.getElementById('f-grade').value;
+  const f  = STUDENTS.filter(s=>
+    (!q||(s.name.toLowerCase().includes(q)||s.id.toLowerCase().includes(q)))&&
+    (!ft||s.teacher===ft)&&(!fd||s.day===fd)&&(!fg||s.grade===fg)
+  );
+  document.getElementById('stu-table').innerHTML=`<thead><tr><th>ID</th><th>Name</th><th>Grade</th><th>Teacher</th><th>Day</th><th>Time</th><th>Dur</th><th>Room</th></tr></thead><tbody>`+
+    f.map(s=>`<tr>
+      <td style="color:#aaa;font-size:10px">${s.id}</td>
+      <td style="font-weight:600">${s.name}</td>
+      <td><span class="badge" style="background:${GC[s.grade]||'#eee'};color:#333">${s.grade}</span></td>
+      <td><span style="display:inline-block;padding:2px 8px;border-radius:100px;font-size:10px;background:${TC[s.teacher]||'#eee'};color:#222">${s.teacher}</span></td>
+      <td>${s.day}</td><td style="white-space:nowrap">${s.start}–${s.end}</td>
+      <td>${s.dur}m</td><td style="color:#888">${s.room}</td>
+    </tr>`).join('')+'</tbody>';
+  document.getElementById('stu-count').textContent=`Showing ${f.length} of ${STUDENTS.length} students`;
+}
+
+// ── ROOMS ────────────────────────────────────────────────────
+function renderRoomsGrid(){
+  const dayName=DAYS[currentRoomDay];
+  const ds=STUDENTS.filter(s=>s.day===dayName);
+  const rooms=[...new Set(ds.map(s=>s.room))].sort();
+  if(!ds.length){document.getElementById('rooms-grid').innerHTML='<tbody><tr><td style="padding:20px;font-size:12px;color:#aaa">No sessions.</td></tr></tbody>';return;}
+  const minT=Math.min(...ds.map(s=>toMin(s.start)));
+  const maxT=Math.max(...ds.map(s=>toMin(s.end)));
+  const times=[];for(let t=minT;t<=maxT;t+=15)times.push(t);
+  const smap={};ds.forEach(s=>smap[`${s.room}|${s.start}`]=s);
+  const covered={};rooms.forEach(r=>covered[r]=new Set());
+  ds.forEach(s=>{for(let t=toMin(s.start)+15;t<toMin(s.end);t+=15)covered[s.room].add(t);});
+  let html='<thead><tr><th class="timeh">Time</th>';
+  rooms.forEach(r=>html+=`<th>${r}</th>`);html+='</tr></thead><tbody>';
+  times.forEach(t=>{
+    const isHour=t%60===0;
+    html+=`<tr><td class="tc" style="padding-top:${isHour?5:1}px">${isHour?fmt(t):''}</td>`;
+    rooms.forEach(room=>{
+      const stu=smap[`${room}|${fmt(t)}`];
+      const pReq=stu?REQUESTS.find(r=>r.status==='Pending'&&r.room===room&&DAYS.indexOf(r.day)===currentRoomDay&&r.start===fmt(t)):null;
+      const inter=covered[room].has(t);
+      if(stu){
+        const h=Math.max(28,Math.round((stu.dur/15)*15));
+        const col=TC[stu.teacher]||'#eee';
+        const ex=pReq?'border-style:dashed;border-color:#EF9F27;opacity:.55':'';
+        html+=`<td class="rc"><div class="slot" style="background:${col};height:${h}px;cursor:default;${ex}">
+          <div class="slot-name">${stu.name}</div>
+          <div class="slot-sub">${stu.teacher} · ${stu.grade}</div>
+          <div class="slot-sub">${fmt(toMin(stu.start))}–${stu.end}</div>
+          ${pReq?`<span class="slot-tag" style="background:#FFF3CD;color:#856404">Pending change</span>`:''}
+        </div></td>`;
+      }else if(inter){html+=`<td class="rc"></td>`;}
+      else{html+=`<td class="rc"><div style="height:15px"></div></td>`;}
+    });
+    html+='</tr>';
+  });
+  html+='</tbody>';
+  document.getElementById('rooms-grid').innerHTML=html;
+}
+
+// ── TOAST ────────────────────────────────────────────────────
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';setTimeout(()=>t.style.display='none',3000);}
+
+// ── start ────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
