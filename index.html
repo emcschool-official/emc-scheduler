@@ -146,6 +146,30 @@ table.sg td.rc{padding:1px 2px;vertical-align:top}
 /* filter row */
 .filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .search-input{font-size:12px;padding:7px 12px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a1a;outline:none;max-width:220px}
+.bell-wrap{position:relative;display:inline-flex;align-items:center}
+.bell-btn{font-size:18px;background:none;border:none;cursor:pointer;padding:2px 6px;line-height:1;color:#555}
+.bell-btn:hover{color:#1a1a1a}
+.bell-badge{position:absolute;top:-2px;right:0px;background:#dc3545;color:#fff;font-size:9px;font-weight:700;border-radius:100px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 4px;display:none}
+.notif-panel{position:absolute;top:44px;right:0;width:320px;max-height:420px;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.12);border:1px solid #eee;z-index:50;overflow:hidden;display:none}
+.notif-panel.open{display:block}
+.notif-header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #f0f0f0}
+.notif-header-title{font-size:13px;font-weight:600;color:#1a1a1a}
+.notif-clear{font-size:11px;color:#aaa;background:none;border:none;cursor:pointer}
+.notif-clear:hover{color:#dc3545}
+.notif-list{max-height:360px;overflow-y:auto}
+.notif-item{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid #f5f5f5;cursor:default}
+.notif-item:last-child{border:none}
+.notif-item.unread{background:#f8f9ff}
+.notif-item.unread:hover{background:#f0f3ff}
+.notif-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.notif-icon.approved{background:#D1E7DD}
+.notif-icon.rejected{background:#F8D7DA}
+.notif-icon.trial{background:#FFF3CD}
+.notif-body{flex:1;min-width:0}
+.notif-title{font-size:12px;font-weight:600;color:#1a1a1a;line-height:1.4}
+.notif-desc{font-size:11px;color:#888;line-height:1.4;margin-top:1px}
+.notif-time{font-size:10px;color:#bbb;margin-top:3px}
+.notif-empty{text-align:center;padding:30px;font-size:12px;color:#aaa}
 </style>
 </head>
 <body>
@@ -171,6 +195,19 @@ table.sg td.rc{padding:1px 2px;vertical-align:top}
       <span class="user-pill" id="user-pill"></span>
       <span class="admin-pill" id="admin-pill" style="display:none">Admin</span>
       <button id="refresh-btn" onclick="refreshData()" style="font-size:11px;padding:4px 12px;border-radius:100px;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer">↻ Refresh</button>
+      <div class="bell-wrap" id="bell-wrap" style="display:none">
+        <button class="bell-btn" onclick="toggleNotifPanel()" title="Notifications">🔔</button>
+        <div class="bell-badge" id="bell-badge">0</div>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-header">
+            <span class="notif-header-title">Notifications</span>
+            <button class="notif-clear" onclick="clearNotifs()">Clear all</button>
+          </div>
+          <div class="notif-list" id="notif-list">
+            <div class="notif-empty">No notifications yet</div>
+          </div>
+        </div>
+      </div>
       <button class="logout-btn" onclick="doLogout()">Sign out</button>
     </div>
   </div>
@@ -413,6 +450,7 @@ async function doLogin(){
     userEmail    = email;
     isAdmin      = data.isAdmin || false;
     teacherName  = data.teacherName || data.name || '';
+    document.getElementById('bell-wrap').style.display='inline-flex';
     document.getElementById('login-screen').style.display='none';
     document.getElementById('main-app').style.display='block';
     document.getElementById('user-pill').textContent = email;
@@ -430,11 +468,13 @@ setInterval(async () => {
     const text = await res.text();
     const data = JSON.parse(text);
     if(data.error) return;
+    const oldRequests = [...REQUESTS];
     STUDENTS     = data.students     || STUDENTS;
     REQUESTS     = data.requests     || REQUESTS;
     OVERRIDES    = data.overrides    || OVERRIDES;
     AVAILABILITY = data.availability || AVAILABILITY;
     TEACHER_LIST = data.teachers     || TEACHER_LIST;
+    checkForNewNotifs(oldRequests, REQUESTS);
     // Re-render whichever panel is active
     const activePanel = document.querySelector('.panel.active')?.id;
     if(activePanel==='panel-schedule') renderSchedGrid();
@@ -456,6 +496,9 @@ function showLoginErr(msg){
 
 function doLogout(){
   userEmail=''; isAdmin=false;
+  NOTIFS=[]; lastCheckedRequestIds=new Set();
+  const bell=document.getElementById('bell-wrap');
+  if(bell) bell.style.display='none';
   STUDENTS=[]; REQUESTS=[]; OVERRIDES=[];
   document.getElementById('main-app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
@@ -753,8 +796,15 @@ function pickAction(action){
 function selReason(el,r){document.querySelectorAll('.reason-opt').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');pendingModal.reason=r;}
 
 function isTeacherAvailable(teacher, day, startMin, endMin){
+  // Check if an approved open-slot override exists for this slot
+  const openOverride = OVERRIDES.find(o=>
+    o.teacher===teacher && o.day===day &&
+    o.trialType==='open' && toMin(o.start)===startMin
+  );
+  if(openOverride) return true;
+
   const avail = AVAILABILITY[teacher];
-  if(!avail || !avail[day] || avail[day].length===0) return false; // no availability = not available
+  if(!avail || !avail[day] || avail[day].length===0) return false;
   return avail[day].some(([s,e])=> toMin(s)<=startMin && toMin(e)>=endMin);
 }
 
@@ -833,10 +883,11 @@ async function submitOpenSlot(){
     dur: 60,
     reason,
   };
-  await apiPost(body);
+  // Optimistic update
   REQUESTS.push({...body, requestId:'LOCAL-'+Date.now(), status:'Pending'});
   closeModal(); renderSchedGrid();
   showToast(type==='open-slot-perm' ? 'Permanent open request sent to admin' : 'Weekly open request sent to admin');
+  try{ await apiPost(body); } catch(err){ console.warn('API sync failed:', err); }
 }
 
 function computeEndFmt(start, dur){
@@ -951,13 +1002,21 @@ async function adminApprove(requestId, trialType){
   if(trialType) OVERRIDES.push({teacher:r?.teacher,day:r?.day,room:r?.room,start:r?.start,trialType});
   // open-slot-week: add to overrides so it shows as available this week
   if(r?.type==='open-slot-week'){
+    // Treat as available this week by adding to AVAILABILITY temporarily
+    if(!AVAILABILITY[r.teacher]) AVAILABILITY[r.teacher]={};
+    if(!AVAILABILITY[r.teacher][r.day]) AVAILABILITY[r.teacher][r.day]=[];
+    const endW = computeEndFmt(r.start, r.dur||60);
+    AVAILABILITY[r.teacher][r.day].push([r.start, endW]);
     OVERRIDES.push({teacher:r.teacher, day:r.day, room:r.room, start:r.start, trialType:'open', week:'current'});
   }
   // open-slot-perm: update local AVAILABILITY
   if(r?.type==='open-slot-perm'){
+    // Update local availability so slot shows as available immediately
     if(!AVAILABILITY[r.teacher]) AVAILABILITY[r.teacher]={};
     if(!AVAILABILITY[r.teacher][r.day]) AVAILABILITY[r.teacher][r.day]=[];
-    AVAILABILITY[r.teacher][r.day].push([r.start, r.end]);
+    // Add the full hour range starting from the approved start time
+    const endTime = computeEndFmt(r.start, r.dur||60);
+    AVAILABILITY[r.teacher][r.day].push([r.start, endTime]);
   }
   // if perm reschedule, update local student record too
   if(r?.type==='reschedule-perm'){
@@ -1058,11 +1117,13 @@ async function refreshData(){
     const text = await res.text();
     const data = JSON.parse(text);
     if(!data.error){
+      const oldReqs = [...REQUESTS];
       STUDENTS     = data.students     || STUDENTS;
       REQUESTS     = data.requests     || REQUESTS;
       OVERRIDES    = data.overrides    || OVERRIDES;
       AVAILABILITY = data.availability || AVAILABILITY;
       TEACHER_LIST = data.teachers     || TEACHER_LIST;
+      checkForNewNotifs(oldReqs, REQUESTS);
       renderSchedGrid();
       renderStudents();
       renderAdmin();
@@ -1071,6 +1132,149 @@ async function refreshData(){
     }
   } catch(e){ showToast('Could not refresh — try again'); }
   if(btn){ btn.textContent='↻ Refresh'; btn.disabled=false; }
+}
+
+// ── NOTIFICATIONS ────────────────────────────────────────────
+let NOTIFS = []; // {id, type, title, desc, time, read}
+let notifPanelOpen = false;
+
+function addNotif(type, title, desc){
+  const notif = {
+    id: Date.now(),
+    type,       // 'approved' | 'rejected' | 'trial'
+    title,
+    desc,
+    time: new Date(),
+    read: false,
+  };
+  NOTIFS.unshift(notif);
+  // Keep only current week
+  const weekStart = getWeekStart();
+  NOTIFS = NOTIFS.filter(n => n.time >= weekStart);
+  renderNotifs();
+  // Animate badge
+  const badge = document.getElementById('bell-badge');
+  if(badge){ badge.style.transform='scale(1.4)'; setTimeout(()=>badge.style.transform='',300); }
+}
+
+function getWeekStart(){
+  const now = new Date();
+  const day = now.getDay();
+  const mon = new Date(now);
+  mon.setDate(now.getDate() - (day===0?6:day-1));
+  mon.setHours(0,0,0,0);
+  return mon;
+}
+
+function renderNotifs(){
+  const unread = NOTIFS.filter(n=>!n.read).length;
+  const badge  = document.getElementById('bell-badge');
+  const list   = document.getElementById('notif-list');
+  if(!badge||!list) return;
+
+  // Badge
+  if(unread > 0){
+    badge.textContent = unread > 9 ? '9+' : unread;
+    badge.style.display='flex';
+  } else {
+    badge.style.display='none';
+  }
+
+  // List
+  if(!NOTIFS.length){
+    list.innerHTML='<div class="notif-empty">No notifications this week</div>';
+    return;
+  }
+
+  const iconMap = {approved:'✓', rejected:'✕', trial:'★'};
+  list.innerHTML = NOTIFS.map(n=>{
+    const mins = Math.round((Date.now()-n.time)/60000);
+    const timeStr = mins < 1 ? 'Just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins/60)}h ago`;
+    return `<div class="notif-item${n.read?'':' unread'}" onclick="markRead(${n.id})">
+      <div class="notif-icon ${n.type}">${iconMap[n.type]||'•'}</div>
+      <div class="notif-body">
+        <div class="notif-title">${n.title}</div>
+        <div class="notif-desc">${n.desc}</div>
+        <div class="notif-time">${timeStr}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function markRead(id){
+  const n = NOTIFS.find(n=>n.id===id);
+  if(n) n.read=true;
+  renderNotifs();
+}
+
+function clearNotifs(){
+  NOTIFS=[];
+  renderNotifs();
+  toggleNotifPanel();
+}
+
+function toggleNotifPanel(){
+  notifPanelOpen = !notifPanelOpen;
+  const panel = document.getElementById('notif-panel');
+  if(panel) panel.classList.toggle('open', notifPanelOpen);
+  if(notifPanelOpen){
+    // Mark all read when panel opens
+    setTimeout(()=>{ NOTIFS.forEach(n=>n.read=true); renderNotifs(); }, 1500);
+    // Close when clicking outside
+    setTimeout(()=>{
+      document.addEventListener('click', function closePanel(e){
+        const wrap = document.getElementById('bell-wrap');
+        if(wrap && !wrap.contains(e.target)){
+          notifPanelOpen=false;
+          panel.classList.remove('open');
+          document.removeEventListener('click', closePanel);
+        }
+      });
+    }, 100);
+  }
+}
+
+// Check REQUESTS for new approvals/rejections since last check
+let lastCheckedRequestIds = new Set();
+function checkForNewNotifs(oldRequests, newRequests){
+  // On first load, just record IDs without notifying
+  if(lastCheckedRequestIds.size === 0){
+    newRequests.forEach(r => lastCheckedRequestIds.add(r.requestId));
+    return;
+  }
+  newRequests.forEach(r => {
+    if(lastCheckedRequestIds.has(r.requestId)) {
+      // Check if status changed
+      const old = oldRequests.find(o=>o.requestId===r.requestId);
+      if(old && old.status !== r.status){
+        if(r.status==='Approved'){
+          const isOpen = r.type==='open-slot-week'||r.type==='open-slot-perm';
+          const isWeekOnly = r.type==='absence'||r.type==='reschedule-week'||r.type==='open-slot-week';
+          addNotif('approved',
+            isOpen ? 'Slot opened ✓' : 'Request approved ✓',
+            isOpen
+              ? `Your ${DAYS[DAYS.indexOf(r.day)]||r.day} ${r.start} slot has been opened${isWeekOnly?' for this week':' permanently'}.`
+              : `${r.type==='absence'?'Absence':'Reschedule'} for ${r.studentName||''} on ${r.day} ${r.start} was approved.`
+            + (r.trialType ? ` Opened as ${r.trialType==='free'?'free trial (15min)':'paid trial (45min)'}.` : '')
+          );
+        } else if(r.status==='Rejected'){
+          addNotif('rejected',
+            'Request rejected',
+            `Your request for ${r.studentName||r.day+' '+r.start} was not approved. Contact admin for details.`
+          );
+        }
+      }
+    } else {
+      // New request ID — check if it's a trial booking (admin added a trial to our slot)
+      if((r.type==='absence'||r.type==='reschedule-week') && r.trialType && r.teacher===teacherName){
+        addNotif('trial',
+          'Trial student booked',
+          `A ${r.trialType==='free'?'free (15min)':'paid (45min)'} trial has been booked in your freed slot on ${r.day} ${r.start}.`
+        );
+      }
+      lastCheckedRequestIds.add(r.requestId);
+    }
+  });
 }
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';setTimeout(()=>t.style.display='none',3000);}
