@@ -475,6 +475,7 @@ setInterval(async () => {
     AVAILABILITY = data.availability || AVAILABILITY;
     TEACHER_LIST = data.teachers     || TEACHER_LIST;
     checkForNewNotifs(oldRequests, REQUESTS);
+    renderNotifs();
     // Re-render whichever panel is active
     const activePanel = document.querySelector('.panel.active')?.id;
     if(activePanel==='panel-schedule') renderSchedGrid();
@@ -575,6 +576,9 @@ function initApp(){
   DAYS.forEach(d=>{ const o=document.createElement('option');o.value=d;o.textContent=d;fd.appendChild(o); });
   const fg=document.getElementById('f-grade'); fg.innerHTML='<option value="">All grades</option>';
   GRADES.forEach(g=>{ const o=document.createElement('option');o.value=g;o.textContent=g;fg.appendChild(o); });
+
+  // Seed notification tracker with existing requests so we don't notify on login
+  REQUESTS.forEach(r => lastCheckedRequestIds.add(r.requestId));
 
   makeDayTabs('day-tabs-sched', i=>{currentSchedDay=i;renderSchedGrid();}, 0);
   makeDayTabs('day-tabs-rooms', i=>{currentRoomDay=i;renderRoomsGrid();}, 0);
@@ -796,7 +800,7 @@ function pickAction(action){
 function selReason(el,r){document.querySelectorAll('.reason-opt').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');pendingModal.reason=r;}
 
 function isTeacherAvailable(teacher, day, startMin, endMin){
-  // Check if an approved open-slot override exists for this slot
+  // Check approved open-slot override first
   const openOverride = OVERRIDES.find(o=>
     o.teacher===teacher && o.day===day &&
     o.trialType==='open' && toMin(o.start)===startMin
@@ -805,7 +809,15 @@ function isTeacherAvailable(teacher, day, startMin, endMin){
 
   const avail = AVAILABILITY[teacher];
   if(!avail || !avail[day] || avail[day].length===0) return false;
+  // Require full slot duration to be covered by the availability range
   return avail[day].some(([s,e])=> toMin(s)<=startMin && toMin(e)>=endMin);
+}
+
+// Check if start time merely falls within any available range (partial coverage)
+function isTeacherPartiallyAvailable(teacher, day, startMin){
+  const avail = AVAILABILITY[teacher];
+  if(!avail || !avail[day] || avail[day].length===0) return false;
+  return avail[day].some(([s,e])=> toMin(s)<=startMin && toMin(e)>startMin);
 }
 
 function buildFreeSlotPicker(){
@@ -871,8 +883,29 @@ async function submitNewSlot(){
 }
 
 async function submitOpenSlot(){
-  const type = document.querySelector('#open-slot-opts .reason-opt.sel')?.dataset?.type || 'open-slot-week';
+  const type   = document.querySelector('#open-slot-opts .reason-opt.sel')?.dataset?.type || 'open-slot-week';
   const reason = document.querySelector('#open-slot-opts .reason-opt.sel')?.textContent || '';
+
+  // If requesting permanent, check if full slot duration fits in availability
+  if(type === 'open-slot-perm'){
+    const startMin = toMin(pendingModal.start);
+    const endMin   = startMin + 45; // minimum session = 45 min
+    const fullFit  = isTeacherAvailable(pendingModal.teacher, pendingModal.day, startMin, endMin);
+    const partFit  = isTeacherPartiallyAvailable(pendingModal.teacher, pendingModal.day, startMin);
+    if(partFit && !fullFit){
+      // Start is within range but full slot doesn't fit
+      const avail = AVAILABILITY[pendingModal.teacher]?.[pendingModal.day] || [];
+      const range = avail.find(([s,e])=> toMin(s)<=startMin && toMin(e)>startMin);
+      const availEnd = range ? range[1] : '?';
+      const mins = range ? toMin(availEnd) - startMin : 0;
+      if(!confirm(`⚠ Your availability on ${pendingModal.day} ends at ${availEnd}, which only gives ${mins} minutes from ${pendingModal.start}. A permanent session needs at least 45 minutes.
+
+Do you still want to submit this request? Admin will review.`)){
+        return;
+      }
+    }
+  }
+
   const body={
     action:'submitRequest', type,
     teacher: pendingModal.teacher,
@@ -1237,39 +1270,40 @@ function toggleNotifPanel(){
 // Check REQUESTS for new approvals/rejections since last check
 let lastCheckedRequestIds = new Set();
 function checkForNewNotifs(oldRequests, newRequests){
-  // On first load, just record IDs without notifying
-  if(lastCheckedRequestIds.size === 0){
-    newRequests.forEach(r => lastCheckedRequestIds.add(r.requestId));
-    return;
-  }
+  // Build a map of old statuses for quick lookup
+  const oldStatusMap = {};
+  oldRequests.forEach(r => oldStatusMap[r.requestId] = r.status);
+
   newRequests.forEach(r => {
-    if(lastCheckedRequestIds.has(r.requestId)) {
-      // Check if status changed
-      const old = oldRequests.find(o=>o.requestId===r.requestId);
-      if(old && old.status !== r.status){
-        if(r.status==='Approved'){
-          const isOpen = r.type==='open-slot-week'||r.type==='open-slot-perm';
-          const isWeekOnly = r.type==='absence'||r.type==='reschedule-week'||r.type==='open-slot-week';
-          addNotif('approved',
-            isOpen ? 'Slot opened ✓' : 'Request approved ✓',
-            isOpen
-              ? `Your ${DAYS[DAYS.indexOf(r.day)]||r.day} ${r.start} slot has been opened${isWeekOnly?' for this week':' permanently'}.`
-              : `${r.type==='absence'?'Absence':'Reschedule'} for ${r.studentName||''} on ${r.day} ${r.start} was approved.`
-            + (r.trialType ? ` Opened as ${r.trialType==='free'?'free trial (15min)':'paid trial (45min)'}.` : '')
-          );
-        } else if(r.status==='Rejected'){
-          addNotif('rejected',
-            'Request rejected',
-            `Your request for ${r.studentName||r.day+' '+r.start} was not approved. Contact admin for details.`
-          );
-        }
+    const wasKnown = lastCheckedRequestIds.has(r.requestId);
+    const oldStatus = oldStatusMap[r.requestId];
+
+    if(wasKnown && oldStatus && oldStatus !== r.status){
+      // Status changed — notify if it's this teacher's request
+      if(r.teacher !== teacherName) { return; }
+
+      if(r.status==='Approved'){
+        const isOpen    = r.type==='open-slot-week'||r.type==='open-slot-perm';
+        const isWeekOnly= r.type==='absence'||r.type==='reschedule-week'||r.type==='open-slot-week';
+        addNotif('approved',
+          isOpen ? 'Slot opened ✓' : 'Request approved ✓',
+          isOpen
+            ? `Your ${r.day} ${r.start} slot has been opened${isWeekOnly?' for this week':' permanently'}.`
+            : `${r.studentName||''} on ${r.day} ${r.start} — approved.`
+              + (r.trialType ? ` Now open as ${r.trialType==='free'?'free trial (15 min)':'paid trial (45 min)'}.` : '')
+        );
+      } else if(r.status==='Rejected'){
+        addNotif('rejected',
+          'Request not approved',
+          `Your request for ${r.studentName||r.day+' '+r.start} was rejected. Contact admin for details.`
+        );
       }
-    } else {
-      // New request ID — check if it's a trial booking (admin added a trial to our slot)
-      if((r.type==='absence'||r.type==='reschedule-week') && r.trialType && r.teacher===teacherName){
+    } else if(!wasKnown){
+      // Brand new request — check if it's a trial booked into this teacher's freed slot
+      if(r.trialType && r.teacher===teacherName && r.status==='Approved'){
         addNotif('trial',
-          'Trial student booked',
-          `A ${r.trialType==='free'?'free (15min)':'paid (45min)'} trial has been booked in your freed slot on ${r.day} ${r.start}.`
+          'Trial student booked ★',
+          `A ${r.trialType==='free'?'free (15 min)':'paid (45 min)'} trial was booked in your freed slot on ${r.day} ${r.start}.`
         );
       }
       lastCheckedRequestIds.add(r.requestId);
