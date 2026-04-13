@@ -204,7 +204,10 @@ table.sg td.rc{padding:1px 2px;vertical-align:top}
       </div>
       <div class="day-tabs" id="day-tabs-sched"></div>
       <div class="grid-wrap"><table class="sg" id="sched-grid"></table></div>
-      <div style="margin-top:10px;font-size:11px;color:#aaa">Tap a slot to report absence, reschedule, or make a permanent change.</div>
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+  <div style="font-size:11px;color:#aaa">Tap a slot to report absence, reschedule, or make a permanent change.</div>
+  <button onclick="refreshData()" id="refresh-btn" style="font-size:11px;padding:4px 12px;border-radius:100px;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer">↻ Refresh</button>
+</div>
     </div>
   </div>
 
@@ -420,6 +423,28 @@ async function doLogin(){
       document.getElementById('admin-nav-btn').classList.add('visible');
     }
     loadData();
+
+// Silent background refresh every 30 seconds to stay in sync
+setInterval(async () => {
+  if(!userEmail) return; // not logged in
+  try {
+    const res  = await fetch(`${API_URL}?action=getAll&email=${encodeURIComponent(userEmail)}`, {method:'GET', redirect:'follow', mode:'cors'});
+    const text = await res.text();
+    const data = JSON.parse(text);
+    if(data.error) return;
+    STUDENTS     = data.students     || STUDENTS;
+    REQUESTS     = data.requests     || REQUESTS;
+    OVERRIDES    = data.overrides    || OVERRIDES;
+    AVAILABILITY = data.availability || AVAILABILITY;
+    TEACHER_LIST = data.teachers     || TEACHER_LIST;
+    // Re-render whichever panel is active
+    const activePanel = document.querySelector('.panel.active')?.id;
+    if(activePanel==='panel-schedule') renderSchedGrid();
+    if(activePanel==='panel-admin')    renderAdmin();
+    if(activePanel==='panel-rooms')    renderRoomsGrid();
+    if(activePanel==='panel-students') renderStudents();
+  } catch(e){ /* silent fail - don't bother user */ }
+}, 30000);
   } catch(err){
     showLoginErr('Could not connect to server. Please check your internet or try again in a moment.');
     btn.disabled=false; btn.textContent='Sign in';
@@ -1027,6 +1052,29 @@ function initials(name){
   if(parts.length>=2) return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
   return (name||'??').slice(0,2).toUpperCase();
 }
+async function refreshData(){
+  const btn = document.getElementById('refresh-btn');
+  if(btn){ btn.textContent='↻ Loading...'; btn.disabled=true; }
+  try {
+    const res  = await fetch(`${API_URL}?action=getAll&email=${encodeURIComponent(userEmail)}`, {method:'GET', redirect:'follow', mode:'cors'});
+    const text = await res.text();
+    const data = JSON.parse(text);
+    if(!data.error){
+      STUDENTS     = data.students     || STUDENTS;
+      REQUESTS     = data.requests     || REQUESTS;
+      OVERRIDES    = data.overrides    || OVERRIDES;
+      AVAILABILITY = data.availability || AVAILABILITY;
+      TEACHER_LIST = data.teachers     || TEACHER_LIST;
+      renderSchedGrid();
+      renderStudents();
+      renderAdmin();
+      renderRoomsGrid();
+      showToast('Schedule updated');
+    }
+  } catch(e){ showToast('Could not refresh — try again'); }
+  if(btn){ btn.textContent='↻ Refresh'; btn.disabled=false; }
+}
+
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';setTimeout(()=>t.style.display='none',3000);}
 </script>
 </body>
